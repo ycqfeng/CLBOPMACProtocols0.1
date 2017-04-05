@@ -2,11 +2,14 @@ package network;
 
 import communicationModel.MacLayer;
 import communicationModel.PhyLayer;
+import communicationModel.packetModel.Packet;
+import network.packets.PacketMacRTS;
 import simulator.Interface_Event;
 import simulator.Simulator;
 import simulator.TimeUnitValue;
 import simulator.logSystem.Interface_Log;
 import simulator.logSystem.Log;
+import simulator.queueModel.QueueFIFO;
 import simulator.statistics.Interface_Statistics;
 import simulator.statistics.Statistics;
 
@@ -18,14 +21,24 @@ public class MediaAccessControl extends MacLayer implements Interface_Log, Inter
     private MediaAccessControl thisMAC;
     private PhaseState state;
 
+    private QueueFIFO<Packet> queue;
+
     private ControlTransceiver controlTransceiver;
     private DataTransceiver dataTransceiver;
 
+    private int NAC;
+    private int[] LAC;
+
     private int IFS;//0 - none、1 - SIFS、2 - DIFS
     private boolean IFSInterrupt;
+    private static double lengthSIFS = 15 * TimeUnitValue.us;
+    private static double lengthDIFS = 34 * TimeUnitValue.us;
+    private static int lengthRTS = 44;
+    private static int lengthCTS = 38;
 
     public MediaAccessControl(){
         this.thisMAC = this;
+        this.queue = new QueueFIFO<>();
         Log.enroll(this);
         Statistics.enroll(this);
         double Tms = 9 * TimeUnitValue.us;
@@ -33,15 +46,14 @@ public class MediaAccessControl extends MacLayer implements Interface_Log, Inter
         int nChannel = 3;
         this.IFS = 0;
         this.state = new PhaseState(Tms, Ts, nChannel);
-
     }
 
     /**
      * SIFS
      * 0 - none、1 - RTS、2 - CTS
-     * @param behaviorAfterIFS
+     * @param behaviorAfterIFS 行为
      */
-    public void SIFSBegin(int behaviorAfterIFS){
+    private void SIFSBegin(int behaviorAfterIFS){
         this.IFS = 1;
         this.IFSInterrupt = false;
         Interface_Event end = new Interface_Event() {
@@ -50,12 +62,51 @@ public class MediaAccessControl extends MacLayer implements Interface_Log, Inter
                 SIFSEnd(behaviorAfterIFS);
             }
         };
+        Simulator.addEvent(lengthSIFS, end);
     }
 
-    public void SIFSEnd(int behaviorAfterIFS){
+    private void SIFSEnd(int behaviorAfterIFS){
         this.IFS = 0;
     }
 
+    /**
+     * DIFS
+     * @param behaviorAfterIFS 行为
+     */
+    private void DIFSBegin(int behaviorAfterIFS){
+        this.IFS = 1;
+        this.IFSInterrupt = false;
+        Interface_Event end = new Interface_Event() {
+            @Override
+            public void run() {
+                DIFSEnd(behaviorAfterIFS);
+            }
+        };
+        Simulator.addEvent(lengthDIFS, end);
+    }
+    private void DIFSEnd(int behaviorAfterIFS){
+
+    }
+
+    private void sendRTS(){
+        PacketMacRTS rts = new PacketMacRTS(lengthRTS, this);
+        rts.setSource(this.getAddressMac());
+        rts.setDestination(this.getAddressMac());
+        this.controlTransceiver.send(rts, 0);
+    }
+
+    private void senseChannel(int channelIndex){
+        Log.printlnLogicInfo(this, getDirectory()+"-> senseChannel(channelIndex : "+channelIndex+")");
+        if (this.dataTransceiver.isTxAble(channelIndex)){
+            this.NAC +=1;
+            this.LAC[channelIndex] = 1;
+        }
+    }
+
+    /**
+     * 安装收发机
+     * @param transceiver 收发机
+     */
     public void installTransceiver(PhyLayer transceiver){
         if (transceiver.getName().equals(ControlTransceiver.NAME)){
             this.controlTransceiver = (ControlTransceiver) transceiver;
@@ -64,6 +115,7 @@ public class MediaAccessControl extends MacLayer implements Interface_Log, Inter
         if (transceiver.getName().equals(DataTransceiver.NAME)){
             this.dataTransceiver = (DataTransceiver) transceiver;
             this.dataTransceiver.installMAC(this);
+            this.LAC = new int[this.dataTransceiver.getSumChannelNum()];
         }
     }
 
@@ -131,6 +183,8 @@ public class MediaAccessControl extends MacLayer implements Interface_Log, Inter
         }
         void NegotiatePhaseEnd(){
             this.state = ReportPhase;
+            NAC = 0;
+            LAC = new int[LAC.length];
             ReportPhaseStart();
         }
     }

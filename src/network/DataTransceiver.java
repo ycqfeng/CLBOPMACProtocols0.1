@@ -222,6 +222,10 @@ public class DataTransceiver extends PhyLayer implements Interface_Log, Interfac
                 && (this.channelTransState[channelIndex] == 0);
     }
 
+    protected int getSumChannelNum(){
+        return this.channelRecvState.length;
+    }
+
     @Override
     public String getDirectory() {
         if (this.mac == null){
